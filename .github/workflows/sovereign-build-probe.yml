@@ -1,8 +1,9 @@
 name: sovereign-build-probe
 
-# Probe: can the four target platforms build composed `integration` on
-# GitHub-hosted runners at all? No bundling, no signing, no artifacts —
-# we only want to know "does this complete, and roughly how long?"
+# Probe: can GitHub-hosted runners build the artifacts we actually need?
+# Linux only needs headless/remote-server artifacts (both x86_64 and aarch64).
+# macOS and Windows need GUI binaries. No signing, no notarization, no artifacts —
+# we only want to know "does this complete?" Build times are visible in the GUI.
 # Build times and pass/fail are visible in the Actions GUI.
 
 on:
@@ -25,16 +26,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: linux-x86_64-nix
+          - label: linux-x86_64-remote-server
             os: ubuntu-latest
-            kind: nix
-          - label: linux-aarch64-nix
+            kind: cargo-linux-remote
+            target: x86_64-unknown-linux-musl
+          - label: linux-aarch64-remote-server
             os: ubuntu-24.04-arm
-            kind: nix
-          - label: darwin-aarch64-nix
+            kind: cargo-linux-remote
+            target: aarch64-unknown-linux-musl
+          - label: darwin-aarch64-gui-nix
             os: macos-14
             kind: nix
-          - label: windows-x86_64-cargo
+          - label: windows-x86_64-gui-cargo
             os: windows-latest
             kind: cargo-windows
     runs-on: ${{ matrix.os }}
@@ -56,7 +59,68 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
 
-      # --- Nix path (linux + darwin) ---------------------------------------
+      # --- Linux headless path (remote_server only) ------------------------
+
+      - name: Configure Cargo paths (linux)
+        if: matrix.kind == 'cargo-linux-remote'
+        run: |
+          mkdir -p /mnt/zed-target
+          echo "CARGO_TARGET_DIR=/mnt/zed-target" >> "$GITHUB_ENV"
+
+      - name: Install Linux build dependencies
+        if: matrix.kind == 'cargo-linux-remote'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            curl \
+            elfutils \
+            gettext-base \
+            git \
+            g++ \
+            gcc \
+            jq \
+            libasound2-dev \
+            libfontconfig-dev \
+            libgit2-dev \
+            libglib2.0-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libstdc++-14-dev \
+            libva-dev \
+            libvulkan1 \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libzstd-dev \
+            lld \
+            llvm \
+            make \
+            musl-dev \
+            musl-tools \
+            perl \
+            pkg-config \
+            zlib1g-dev
+
+      - name: Install Rust (linux remote_server)
+        if: matrix.kind == 'cargo-linux-remote'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo cache (linux remote_server)
+        if: matrix.kind == 'cargo-linux-remote'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sovereign-zed-remote-server-${{ matrix.target }}
+
+      - name: cargo build remote_server (linux)
+        if: matrix.kind == 'cargo-linux-remote'
+        run: cargo build --release --package remote_server --target ${{ matrix.target }}
+
+      # --- Nix GUI path (darwin) -------------------------------------------
 
       - name: Install Nix
         if: matrix.kind == 'nix'
