@@ -66,12 +66,34 @@ function CheckEnvironmentVariables {
         return
     }
 
-    $requiredVars = @(
-        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
-        'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
-        'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
-        'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
-    )
+    $signingMode = $env:SOVEREIGN_WINDOWS_SIGNING_MODE
+    if ([string]::IsNullOrWhiteSpace($signingMode)) {
+        $signingMode = 'azure'
+    }
+    $signingMode = $signingMode.ToLowerInvariant()
+    Write-Output "Sovereign Windows signing mode: $signingMode"
+
+    $commonVars = @('ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL')
+
+    switch ($signingMode) {
+        'pfx' {
+            $requiredVars = $commonVars + @(
+                'SOVEREIGN_WINDOWS_CERT_PFX_B64',
+                'SOVEREIGN_WINDOWS_CERT_PASSWORD'
+            )
+        }
+        'azure' {
+            $requiredVars = $commonVars + @(
+                'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
+                'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
+                'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+            )
+        }
+        default {
+            Write-Error "Unknown SOVEREIGN_WINDOWS_SIGNING_MODE '$signingMode'; expected 'pfx' or 'azure'."
+            exit 1
+        }
+    }
 
     foreach ($var in $requiredVars) {
         if (-not (Test-Path "env:$var")) {
