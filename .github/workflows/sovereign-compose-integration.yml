@@ -48,7 +48,7 @@ jobs:
 
           if sovereign/scripts/compose.sh --force; then
             integration_sha="$(git rev-parse integration)"
-            current_integration_sha="$(git ls-remote --heads origin integration | awk '{ print $1 }')"
+            current_integration_sha="$(git ls-remote origin refs/heads/integration | awk '{ print $1 }')"
 
             echo "integration: ${current_integration_sha:-<missing>} -> $integration_sha"
 
@@ -69,7 +69,7 @@ jobs:
             while IFS= read -r local_ref; do
               short_ref="${local_ref#refs/heads/}"
               local_sha="$(git rev-parse "$local_ref")"
-              remote_sha="$(git ls-remote --heads origin "$short_ref" | awk '{ print $1 }')"
+              remote_sha="$(git ls-remote origin "refs/heads/$short_ref" | awk '{ print $1 }')"
 
               echo "$short_ref: ${remote_sha:-<missing>} -> $local_sha" >&2
 

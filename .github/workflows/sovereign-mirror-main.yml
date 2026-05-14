@@ -33,7 +33,7 @@ jobs:
 
           git fetch --depth=1 upstream main
           upstream_sha="$(git rev-parse FETCH_HEAD)"
-          current_sha="$(git ls-remote --heads origin main | awk '{ print $1 }')"
+          current_sha="$(git ls-remote origin refs/heads/main | awk '{ print $1 }')"
 
           echo "upstream/main: $upstream_sha"
           echo "origin/main:   ${current_sha:-<missing>}"
