@@ -5,7 +5,7 @@ This fork is maintained as a small semantic patch stack on top of upstream Zed. 
 The short version:
 
 - `main` is the upstream mirror ref. It should match `upstream/main` exactly.
-- `sovereign/main` is the recipe branch: scripts, docs, workflows, `sovereign/series`, and `sovereign/upstream-base` live here.
+- `sovereign/main` is the recipe branch: scripts, docs, workflows, and `sovereign/series` live here.
 - `topic/<name>` branches are semantic patches.
 - `topic-base/<name>` branches delimit patches: `topic-base/<name>..topic/<name>` is the range compose applies.
 - `integration` and `develop` are computed refs. Never commit to them.
@@ -18,7 +18,7 @@ Before every edit, ask: **is this recipe, or is this a patch?**
 | Compose/release scripts, fork docs, fork-owned workflows | `sovereign/main` |
 | `crates/**`, `assets/**`, `extensions/**`, `nix/**`, `flake.nix`, `Cargo.toml`, `script/bundle-*`, or anything that affects built bytes | `topic/<name>` |
 | Adding/removing/reordering active patches | `sovereign/series` on `sovereign/main` |
-| Advancing upstream | `sovereign/upstream-base` on `sovereign/main`, then topic repair as needed |
+| Advancing upstream | mirror `main`; composition automatically rebases the active stack onto the mirrored `main` ref |
 
 Zed being Nix-based does not make Nix edits recipe by default. If a Nix change affects the resulting app, package, release channel, update behavior, or source closure, it is a source patch and belongs in a topic branch.
 
@@ -38,7 +38,6 @@ Do not put Sovereign workflows, docs, or source changes here.
 - `sovereign/JOURNAL.md`
 - `sovereign/scripts/*`
 - `sovereign/series`
-- `sovereign/upstream-base`
 - `.github/workflows/sovereign-*.yml`
 
 Do not put shipping source/product changes here. A source change on `sovereign/main` is just recipe-branch drift unless a topic also carries that change.
@@ -69,10 +68,12 @@ Move a topic base only as part of an intentional repair after the topic successf
 `integration` is computed from:
 
 ```text
-sovereign/upstream-base + sovereign/series
+main + sovereign/series
 ```
 
-It is updated only after the full active stack composes successfully. If composition fails, `integration` remains at the last known good composed tree.
+Here `main` means this fork's exact mirror of upstream Zed `main`. Composition normally resolves `origin/main` first, then local `main`. Use `sovereign/scripts/compose.sh --base <rev>` only when intentionally pinning, bisecting, or testing a non-default base.
+
+`integration` is updated only after the full active stack composes successfully. If composition fails, `integration` remains at the last known good composed tree.
 
 Never commit to `integration`.
 
@@ -133,7 +134,6 @@ Use `sovereign/main` for changes to the recipe itself:
 - fork-owned workflows
 - docs and process notes
 - `sovereign/series`
-- `sovereign/upstream-base`
 
 If a recipe change needs matching source behavior, split it deliberately:
 

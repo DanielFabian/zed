@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - sovereign/main
-  schedule:
-    - cron: '9,19,29,39,49,59 * * * *'
 
 concurrency:
   group: sovereign-compose-integration
@@ -41,7 +39,7 @@ jobs:
           git switch --detach refs/remotes/origin/sovereign/main
 
           git fetch upstream main --tags
-          git fetch origin '+refs/heads/main:refs/heads/main'
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main'
           git fetch origin '+refs/heads/integration:refs/heads/integration' || true
           git fetch origin '+refs/heads/topic/*:refs/heads/topic/*'
           git fetch origin '+refs/heads/topic-base/*:refs/heads/topic-base/*'

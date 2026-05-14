@@ -5,13 +5,13 @@ usage() {
   cat <<'EOF'
 Usage: sovereign/scripts/compose.sh [options]
 
-Compose Sovereign Zed from an upstream base plus topic ranges listed in
-sovereign/series. On full success, updates the computed integration ref. On
-failure, leaves integration unchanged and writes topic-repair-base/<name> at the
-last successfully composed prefix.
+Compose Sovereign Zed from the mirrored upstream `main` ref plus topic ranges
+listed in sovereign/series. On full success, updates the computed integration
+ref. On failure, leaves integration unchanged and writes topic-repair-base/<name>
+at the last successfully composed prefix.
 
 Options:
-  --base <rev>       Base revision to compose onto. Defaults to sovereign/upstream-base.
+  --base <rev>       Base revision to compose onto. Defaults to origin/main, then main.
   --series <path>    Series file. Defaults to sovereign/series.
   --worktree <path>  Compose worktree. Defaults to .git/sovereign-compose.
   --ref <ref>        Computed ref to update on success. Defaults to integration.
@@ -22,7 +22,6 @@ EOF
 }
 
 repo_root=$(git rev-parse --show-toplevel)
-base_file="$repo_root/sovereign/upstream-base"
 series_file="$repo_root/sovereign/series"
 worktree="$repo_root/.git/sovereign-compose"
 output_ref="integration"
@@ -69,15 +68,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$base" ]]; then
-  if [[ ! -f "$base_file" ]]; then
-    echo "missing base file: $base_file" >&2
-    exit 1
+  if [[ -n "${SOVEREIGN_BASE:-}" ]]; then
+    base="$SOVEREIGN_BASE"
+  elif git -C "$repo_root" rev-parse --verify --quiet "origin/main^{commit}" >/dev/null; then
+    base="origin/main"
+  elif git -C "$repo_root" rev-parse --verify --quiet "main^{commit}" >/dev/null; then
+    base="main"
+  elif git -C "$repo_root" remote get-url origin >/dev/null 2>&1; then
+    echo "default base not present locally; fetching origin main" >&2
+    git -C "$repo_root" fetch origin '+refs/heads/main:refs/remotes/origin/main'
+    base="origin/main"
+  elif git -C "$repo_root" remote get-url upstream >/dev/null 2>&1; then
+    echo "default base not present locally; fetching upstream main" >&2
+    git -C "$repo_root" fetch upstream main --tags
+    base=$(git -C "$repo_root" rev-parse FETCH_HEAD)
   fi
-  base=$(awk 'NF && $1 !~ /^#/ { print $1; exit }' "$base_file")
 fi
 
 if [[ -z "$base" ]]; then
-  echo "empty upstream base" >&2
+  echo "could not determine default base; fetch origin/main or pass --base <rev>" >&2
   exit 1
 fi
 
@@ -87,20 +96,31 @@ if [[ ! -f "$series_file" ]]; then
 fi
 
 if ! git -C "$repo_root" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-  if git -C "$repo_root" remote get-url upstream >/dev/null 2>&1; then
-    echo "base not present locally; fetching upstream main" >&2
-    git -C "$repo_root" fetch upstream main --tags
-  fi
+  case "$base" in
+    origin/main)
+      git -C "$repo_root" fetch origin '+refs/heads/main:refs/remotes/origin/main'
+      ;;
+    upstream/main)
+      git -C "$repo_root" fetch upstream '+refs/heads/main:refs/remotes/upstream/main' --tags
+      ;;
+    main)
+      git -C "$repo_root" fetch origin '+refs/heads/main:refs/heads/main' || true
+      ;;
+    *)
+      ;;
+  esac
 fi
 
 git -C "$repo_root" rev-parse --verify --quiet "$base^{commit}" >/dev/null || {
   cat >&2 <<EOF
 base does not resolve to a commit: $base
-Fetch the upstream base first, for example:
-  git fetch upstream main --tags
+Fetch the mirrored upstream base first, for example:
+  git fetch origin '+refs/heads/main:refs/remotes/origin/main'
 EOF
   exit 1
 }
+
+echo "compose base: $base ($(git -C "$repo_root" rev-parse "$base^{commit}"))"
 
 remove_worktree() {
   if git -C "$repo_root" worktree list --porcelain | grep -Fxq "worktree $worktree"; then
