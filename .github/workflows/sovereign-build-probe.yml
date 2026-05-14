@@ -71,6 +71,24 @@ jobs:
 
       # --- Windows path (cargo, no bundle/sign) ----------------------------
 
+      - name: Enable Win32 long paths (windows)
+        if: matrix.kind == 'cargo-windows'
+        shell: pwsh
+        run: |
+          # 1. Filesystem-level long paths (registry, requires admin — GH runners run elevated)
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+            -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force | Out-Null
+          # 2. Git long paths
+          git config --global core.longpaths true
+          # 3. Move cargo + target to short roots on the big D: drive.
+          #    The pet-conda test fixtures bury paths ~250 chars below CARGO_HOME,
+          #    so the prefix has to be as short as possible.
+          New-Item -ItemType Directory -Force -Path D:\c | Out-Null
+          New-Item -ItemType Directory -Force -Path D:\t | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "CARGO_HOME=D:\c"
+          Add-Content -Path $env:GITHUB_ENV -Value "CARGO_TARGET_DIR=D:\t"
+          Add-Content -Path $env:GITHUB_PATH -Value "D:\c\bin"
+
       - name: Install Rust (windows)
         if: matrix.kind == 'cargo-windows'
         uses: dtolnay/rust-toolchain@stable
@@ -82,14 +100,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: sovereign-zed-windows
-          # CARGO_TARGET_DIR set below; rust-cache picks it up.
-
-      - name: Move CARGO_TARGET_DIR to D drive (windows)
-        if: matrix.kind == 'cargo-windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path D:\zed-target | Out-Null
-          "CARGO_TARGET_DIR=D:\zed-target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: cargo build --release (windows)
         if: matrix.kind == 'cargo-windows'
