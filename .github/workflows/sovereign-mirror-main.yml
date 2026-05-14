@@ -1,0 +1,50 @@
+name: sovereign mirror main
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+
+concurrency:
+  group: sovereign-mirror-main
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  mirror-main:
+    name: Mirror upstream main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror zed-industries/main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          workdir="$RUNNER_TEMP/sovereign-main-mirror"
+          rm -rf "$workdir"
+          git init "$workdir"
+          cd "$workdir"
+
+          git remote add upstream https://github.com/zed-industries/zed.git
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git fetch --depth=1 upstream main
+          upstream_sha="$(git rev-parse FETCH_HEAD)"
+          current_sha="$(git ls-remote --heads origin main | awk '{ print $1 }')"
+
+          echo "upstream/main: $upstream_sha"
+          echo "origin/main:   ${current_sha:-<missing>}"
+
+          if [[ "$current_sha" == "$upstream_sha" ]]; then
+            echo "origin/main is already up to date"
+            exit 0
+          fi
+
+          if [[ -n "$current_sha" ]]; then
+            git push --force-with-lease=refs/heads/main:"$current_sha" origin "$upstream_sha:refs/heads/main"
+          else
+            git push origin "$upstream_sha:refs/heads/main"
+          fi
