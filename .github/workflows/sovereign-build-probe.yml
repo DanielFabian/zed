@@ -64,8 +64,8 @@ jobs:
       - name: Configure Cargo paths (linux)
         if: matrix.kind == 'cargo-linux-remote'
         run: |
-          mkdir -p /mnt/zed-target
-          echo "CARGO_TARGET_DIR=/mnt/zed-target" >> "$GITHUB_ENV"
+          mkdir -p "$GITHUB_WORKSPACE/.cargo-target"
+          echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/.cargo-target" >> "$GITHUB_ENV"
 
       - name: Install Linux build dependencies
         if: matrix.kind == 'cargo-linux-remote'
