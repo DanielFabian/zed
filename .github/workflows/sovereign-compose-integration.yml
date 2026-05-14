@@ -1,0 +1,84 @@
+name: sovereign compose integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - sovereign/main
+  schedule:
+    - cron: '9,19,29,39,49,59 * * * *'
+
+concurrency:
+  group: sovereign-compose-integration
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  compose-integration:
+    name: Compose integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose patch stack
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          workdir="$RUNNER_TEMP/sovereign-compose-integration"
+          rm -rf "$workdir"
+          git init "$workdir"
+          cd "$workdir"
+
+          git config user.name "sovereign-compose[bot]"
+          git config user.email "sovereign-compose[bot]@users.noreply.github.com"
+
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add upstream https://github.com/zed-industries/zed.git
+
+          git fetch origin '+refs/heads/sovereign/main:refs/remotes/origin/sovereign/main'
+          git switch --detach refs/remotes/origin/sovereign/main
+
+          git fetch upstream main --tags
+          git fetch origin '+refs/heads/main:refs/heads/main'
+          git fetch origin '+refs/heads/integration:refs/heads/integration' || true
+          git fetch origin '+refs/heads/topic/*:refs/heads/topic/*'
+          git fetch origin '+refs/heads/topic-base/*:refs/heads/topic-base/*'
+
+          if sovereign/scripts/compose.sh --force; then
+            integration_sha="$(git rev-parse integration)"
+            current_integration_sha="$(git ls-remote --heads origin integration | awk '{ print $1 }')"
+
+            echo "integration: ${current_integration_sha:-<missing>} -> $integration_sha"
+
+            if [[ "$current_integration_sha" == "$integration_sha" ]]; then
+              echo "origin/integration is already up to date"
+              exit 0
+            fi
+
+            if [[ -n "$current_integration_sha" ]]; then
+              git push --force-with-lease=refs/heads/integration:"$current_integration_sha" origin "$integration_sha:refs/heads/integration"
+            else
+              git push origin "$integration_sha:refs/heads/integration"
+            fi
+          else
+            status=$?
+            echo "compose failed; publishing repair bases if any" >&2
+
+            while IFS= read -r local_ref; do
+              short_ref="${local_ref#refs/heads/}"
+              local_sha="$(git rev-parse "$local_ref")"
+              remote_sha="$(git ls-remote --heads origin "$short_ref" | awk '{ print $1 }')"
+
+              echo "$short_ref: ${remote_sha:-<missing>} -> $local_sha" >&2
+
+              if [[ -n "$remote_sha" ]]; then
+                git push --force-with-lease="$local_ref:$remote_sha" origin "$local_sha:$local_ref"
+              else
+                git push origin "$local_sha:$local_ref"
+              fi
+            done < <(git for-each-ref --format='%(refname)' refs/heads/topic-repair-base)
+
+            exit "$status"
+          fi

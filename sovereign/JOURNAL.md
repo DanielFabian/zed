@@ -10,6 +10,8 @@ Open operational choice: if GitHub Actions cron is used, the repository default 
 
 First workflow: `.github/workflows/sovereign-mirror-main.yml` mirrors `zed-industries/zed/main` into this fork's `main` every ten minutes and on manual dispatch. It belongs on the orphan recipe branch because it is fork orchestration, not source. The scheduled trigger will only fire after GitHub's default branch points at the recipe branch.
 
+Second workflow: `.github/workflows/sovereign-compose-integration.yml` composes `integration` from `sovereign/upstream-base` plus `sovereign/series`. It runs on manual dispatch, on pushes to `sovereign/main`, and every ten minutes two minutes after the mirror workflow. It intentionally does not rely on `topic/*` push triggers because topic branches are source trees and should not contain recipe workflows; schedule gives eventual recomposition when topics change.
+
 ## Open questions
 
 - Should `sovereign/main` become the GitHub default branch, leaving `main` as a mirror ref?
