@@ -4,15 +4,24 @@
 mod reliability;
 mod zed;
 
-// Ensure the binary name stays in sync with APP_NAME so that the paths used
-// at runtime (data dir, config dir, etc.) match what the binary is called.
-const _: () = assert!(
-    paths::APP_NAME_LOWERCASE
-        .as_bytes()
-        .eq_ignore_ascii_case(env!("CARGO_BIN_NAME").as_bytes()),
-    "paths::APP_NAME_LOWERCASE must match the binary name. \
-     Forks: update APP_NAME in crates/paths/src/paths.rs when renaming the binary.",
-);
+// Sovereign Zed intentionally decouples the user-facing application identity
+// (`paths::APP_NAME`) from the compiled binary name. The binary is still
+// `zed` so upstream tooling, bundle scripts, and remote-server paths keep
+// working unchanged, while config/data/cache directories use `Sovereign` so
+// the install does not collide with upstream Zed on the same machine.
+//
+// Upstream's debug-only assertion that `APP_NAME_LOWERCASE` matches
+// `CARGO_BIN_NAME` is intentionally omitted here.
+const _: () = {
+    assert!(
+        !paths::APP_NAME_LOWERCASE.is_empty(),
+        "paths::APP_NAME_LOWERCASE must not be empty",
+    );
+    assert!(
+        !env!("CARGO_BIN_NAME").is_empty(),
+        "CARGO_BIN_NAME must not be empty",
+    );
+};
 
 use agent::{SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;

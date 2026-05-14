@@ -14,8 +14,12 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// The application name, used to derive platform-specific data, config, cache,
 /// and state directory paths.
 ///
-/// Forks should change this to avoid colliding with Zed's user data.
-pub const APP_NAME: &str = "Zed";
+/// Sovereign Zed deliberately uses `Sovereign` here so that data/config/cache
+/// directories do not collide with an upstream Zed installation on the same
+/// machine. The compiled binary intentionally remains named `zed` so the rest
+/// of upstream Zed's tooling (Nix wrappers, install scripts, bundle scripts)
+/// keeps working without per-platform renames.
+pub const APP_NAME: &str = "Sovereign";
 
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
