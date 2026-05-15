@@ -1,10 +1,28 @@
 name: sovereign-build-probe
 
 # Probe: can GitHub-hosted runners build the artifacts we actually need?
-# Linux only needs headless/remote-server artifacts (both x86_64 and aarch64).
-# macOS and Windows need GUI binaries. No signing, no notarization, no artifacts —
-# we only want to know "does this complete?" Build times are visible in the GUI.
-# Build times and pass/fail are visible in the Actions GUI.
+#
+# Matrix is the closure floor of where Dany actually runs code:
+#   - darwin-aarch64 GUI       (personal mac, work MacBook Pro)
+#   - windows-x86_64 GUI       (work / personal laptop)
+#   - linux-x86_64  GUI bundle (Hyper-V backend / codespace)
+#   - linux-aarch64 GUI bundle (MacBook Pro VM backend)
+#
+# Goal of this iteration: match upstream's run_bundling.yml as closely as
+# possible, so we measure Zed's *real* build, not an ad-hoc reinvention.
+# Earlier probe used `nix build .#default` for macOS, which exploded /nix/store
+# on a cold runner and failed for disk-space reasons — upstream itself runs
+# `./script/bundle-mac` (cargo-direct) and reserves the nix flake build as a
+# `continue-on-error` side experiment gated to `zed-industries` only.
+#
+# No signing/notarization secrets are configured here. The bundle scripts are
+# expected to:
+#   - macOS:  produce an unsigned .app and DMG (bundle-mac guards signing on env)
+#   - Linux:  unaffected by signing
+#   - Windows: bundle-windows.ps1 hard-fails when CI=1 and AZURE_* are absent;
+#             therefore we run the cargo subset it would have compiled rather
+#             than calling the script. Honest signal: "does it compile?",
+#             without lying to the script's env preflight.
 
 on:
   workflow_dispatch:
@@ -17,6 +35,16 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Match upstream: trace + fail-fast pipelines. Helps diagnose surprises.
+    shell: bash -euxo pipefail {0}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  RUST_BACKTRACE: '1'
+
 jobs:
   build:
     name: ${{ matrix.label }}
@@ -26,21 +54,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: linux-x86_64-remote-server
+          - label: linux-x86_64-gui
             os: ubuntu-latest
-            kind: cargo-linux-remote
-            target: x86_64-unknown-linux-musl
-          - label: linux-aarch64-remote-server
+            kind: linux-bundle
+          - label: linux-aarch64-gui
             os: ubuntu-24.04-arm
-            kind: cargo-linux-remote
-            target: aarch64-unknown-linux-musl
-          - label: darwin-aarch64-gui-nix
+            kind: linux-bundle
+          - label: darwin-aarch64-gui
             os: macos-14
-            kind: nix
-          - label: windows-x86_64-gui-cargo
+            kind: mac-bundle
+            mac_target: aarch64-apple-darwin
+          - label: windows-x86_64-gui
             os: windows-latest
-            kind: cargo-windows
+            kind: windows-cargo
     runs-on: ${{ matrix.os }}
+    env:
+      # Required by bundle-windows.ps1 even though we don't invoke it directly
+      # for this probe; harmless on other platforms.
+      ZED_WORKSPACE: ${{ github.workspace }}
     steps:
       - name: Free disk space (linux)
         if: runner.os == 'Linux'
@@ -58,101 +89,103 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+          # Match upstream: don't wipe target/ between checkouts.
+          clean: false
 
-      # --- Linux headless path (remote_server only) ------------------------
+      # --- Linux GUI bundle (upstream-script-equivalent) -------------------
+      # Mirrors run_bundling.yml::bundle_linux_*:
+      #   ./script/linux            (install build deps incl. pipewire/xdg portal)
+      #   ./script/download-wasi-sdk
+      #   ./script/bundle-linux     (produces target/release/zed-linux-<arch>.tar.gz
+      #                              and target/zed-remote-server-linux-<arch>.gz)
 
-      - name: Configure Cargo paths (linux)
-        if: matrix.kind == 'cargo-linux-remote'
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/.cargo-target"
-          echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/.cargo-target" >> "$GITHUB_ENV"
-
-      - name: Install Linux build dependencies
-        if: matrix.kind == 'cargo-linux-remote'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            cmake \
-            curl \
-            elfutils \
-            gettext-base \
-            git \
-            g++ \
-            gcc \
-            jq \
-            libasound2-dev \
-            libfontconfig-dev \
-            libgit2-dev \
-            libglib2.0-dev \
-            libsqlite3-dev \
-            libssl-dev \
-            libstdc++-14-dev \
-            libva-dev \
-            libvulkan1 \
-            libwayland-dev \
-            libx11-xcb-dev \
-            libxkbcommon-x11-dev \
-            libzstd-dev \
-            lld \
-            llvm \
-            make \
-            musl-dev \
-            musl-tools \
-            perl \
-            pkg-config \
-            zlib1g-dev
-
-      - name: Install Rust (linux remote_server)
-        if: matrix.kind == 'cargo-linux-remote'
+      - name: Install Rust toolchain (linux)
+        if: matrix.kind == 'linux-bundle'
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Ensure Rust target is installed (linux remote_server)
-        if: matrix.kind == 'cargo-linux-remote'
-        run: |
-          rustup target add ${{ matrix.target }}
-          rustup target list --installed
-
-      - name: Cargo cache (linux remote_server)
-        if: matrix.kind == 'cargo-linux-remote'
+      - name: Cargo cache (linux)
+        if: matrix.kind == 'linux-bundle'
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: sovereign-zed-remote-server-${{ matrix.target }}
+          shared-key: sovereign-zed-linux-${{ matrix.os }}
 
-      - name: cargo build remote_server (linux)
-        if: matrix.kind == 'cargo-linux-remote'
-        run: cargo build --release --package remote_server --target ${{ matrix.target }}
+      - name: ./script/linux
+        if: matrix.kind == 'linux-bundle'
+        env:
+          # The script unconditionally calls `apt-get install` under sudo; on
+          # GH-hosted runners that's fine. It also runs `rustup` at the end to
+          # ensure a toolchain — harmless given dtolnay/rust-toolchain above.
+          CC: clang
+          CXX: clang++
+        run: ./script/linux
 
-      # --- Nix GUI path (darwin) -------------------------------------------
+      - name: ./script/download-wasi-sdk
+        if: matrix.kind == 'linux-bundle'
+        run: ./script/download-wasi-sdk
 
-      - name: Install Nix
-        if: matrix.kind == 'nix'
-        uses: DeterminateSystems/nix-installer-action@main
+      - name: ./script/bundle-linux
+        if: matrix.kind == 'linux-bundle'
+        env:
+          CC: clang
+          CXX: clang++
+        run: ./script/bundle-linux
+
+      - name: Show linux artifacts
+        if: matrix.kind == 'linux-bundle'
+        run: |
+          ls -lh target/release/zed-linux-*.tar.gz 2>/dev/null || true
+          ls -lh target/zed-remote-server-linux-*.gz 2>/dev/null || true
+
+      # --- macOS GUI bundle (upstream cargo path, no nix) ------------------
+      # Mirrors run_bundling.yml::bundle_mac_aarch64. bundle-mac internally
+      # checks for the five MACOS_*/APPLE_* env vars before attempting any
+      # codesign/notarytool work — absent => unsigned build, completes normally.
+
+      - name: Setup Node (mac)
+        if: matrix.kind == 'mac-bundle'
+        uses: actions/setup-node@v4
         with:
-          extra-conf: |
-            accept-flake-config = true
+          node-version: '20'
 
-      - name: nix build .#default
-        if: matrix.kind == 'nix'
-        run: nix build .#default --accept-flake-config --print-build-logs
+      - name: Install Rust toolchain (mac)
+        if: matrix.kind == 'mac-bundle'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.mac_target }}
 
-      # --- Windows path (cargo, no bundle/sign) ----------------------------
+      - name: Cargo cache (mac)
+        if: matrix.kind == 'mac-bundle'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sovereign-zed-mac-${{ matrix.mac_target }}
+
+      - name: ./script/clear-target-dir-if-larger-than 350 200
+        if: matrix.kind == 'mac-bundle'
+        run: ./script/clear-target-dir-if-larger-than 350 200
+
+      - name: ./script/bundle-mac ${{ matrix.mac_target }}
+        if: matrix.kind == 'mac-bundle'
+        run: ./script/bundle-mac ${{ matrix.mac_target }}
+
+      - name: Show mac artifacts
+        if: matrix.kind == 'mac-bundle'
+        run: |
+          find target -maxdepth 4 \( -name 'Zed-*.dmg' -o -name 'zed-remote-server-macos-*.gz' \) -exec ls -lh {} +
+
+      # --- Windows cargo subset (no installer, no signing) -----------------
+      # bundle-windows.ps1 requires AZURE_* signing creds when CI=1; we don't
+      # have those (yet). Run the exact same compilation step that script
+      # performs so the probe answers "does it compile?" honestly, without
+      # stubbing signing creds or unsetting CI.
 
       - name: Enable Win32 long paths (windows)
-        if: matrix.kind == 'cargo-windows'
+        if: matrix.kind == 'windows-cargo'
         shell: pwsh
         run: |
-          # 1. Filesystem-level long paths (registry, requires admin — GH runners run elevated)
           New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
             -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force | Out-Null
-          # 2. Git long paths
           git config --global core.longpaths true
-          # 3. Move cargo + target to short roots on the big D: drive.
-          #    The pet-conda test fixtures bury paths ~250 chars below CARGO_HOME,
-          #    so the prefix has to be as short as possible.
+          # Move cargo + target to short roots on the larger D: drive.
           New-Item -ItemType Directory -Force -Path D:\c | Out-Null
           New-Item -ItemType Directory -Force -Path D:\t | Out-Null
           Add-Content -Path $env:GITHUB_ENV -Value "CARGO_HOME=D:\c"
@@ -160,18 +193,22 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value "D:\c\bin"
 
       - name: Install Rust (windows)
-        if: matrix.kind == 'cargo-windows'
+        if: matrix.kind == 'windows-cargo'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
       - name: Cargo cache (windows)
-        if: matrix.kind == 'cargo-windows'
+        if: matrix.kind == 'windows-cargo'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: sovereign-zed-windows
 
-      - name: cargo build --release (windows)
-        if: matrix.kind == 'cargo-windows'
+      - name: cargo build --release (windows, bundle-windows.ps1 subset)
+        if: matrix.kind == 'windows-cargo'
         shell: pwsh
-        run: cargo build --release --bin zed --target x86_64-pc-windows-msvc
+        run: |
+          # Same packages bundle-windows.ps1 builds before invoking Inno + sign.
+          cargo build --release `
+            --package zed --package cli --package auto_update_helper `
+            --target x86_64-pc-windows-msvc
